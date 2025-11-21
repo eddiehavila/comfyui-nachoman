@@ -407,8 +407,8 @@ class NACHOMAN_FullSongAnalyzerV4:
                 print(f"[NACHOMAN V4]   Starting per-chunk transcription ({total_chunks} chunks)...")
                 print(f"[NACHOMAN V4]   Overlap context: ±{overlap_lyric_seconds}s")
 
-                samples_per_chunk_resampled = int(frames_per_chunk * target_sr / fps)
-                overlap_samples = int(overlap_lyric_seconds * target_sr)
+                samples_per_chunk_resampled = int(frames_per_chunk * target_sr / fps + 0.5)
+                overlap_samples = int(overlap_lyric_seconds * target_sr + 0.5)
 
                 print(f"[NACHOMAN V4]   Samples per chunk: {samples_per_chunk_resampled}")
                 print(f"[NACHOMAN V4]   Overlap samples: {overlap_samples}")
@@ -640,8 +640,8 @@ class NACHOMAN_FullSongAnalyzerV4:
             "empty_chunk_count": empty_chunk_count,  # How many chunks had placeholders
         }
 
-        # Calculate samples per chunk
-        samples_per_chunk_calculated = int(frames_per_chunk * sample_rate / fps)
+        # Calculate samples per chunk (using proper rounding to prevent sample loss)
+        samples_per_chunk_calculated = int(frames_per_chunk * sample_rate / fps + 0.5)
 
         audio_meta = {
             "sample_rate": sample_rate,
@@ -1190,11 +1190,12 @@ class NACHOMAN_LoadSingleAudioChunk:
 
         # ALWAYS recalculate samples_per_chunk using the ACTUAL audio sample rate
         # This ensures correct duration even if audio was resampled between nodes
-        samples_per_chunk = int(frames_per_chunk * sample_rate / fps)
+        # Using + 0.5 before int() ensures proper rounding (prevents sample loss at chunk boundaries)
+        samples_per_chunk = int(frames_per_chunk * sample_rate / fps + 0.5)
 
         print(f"[NACHOMAN V4] Chunk calculation:")
-        print(f"  - Formula: frames_per_chunk * sample_rate / fps")
-        print(f"  - Calculation: {frames_per_chunk} * {sample_rate} / {fps} = {samples_per_chunk}")
+        print(f"  - Formula: frames_per_chunk * sample_rate / fps + 0.5")
+        print(f"  - Calculation: {frames_per_chunk} * {sample_rate} / {fps} + 0.5 = {samples_per_chunk}")
 
         print(f"[NACHOMAN V4] Final chunk parameters:")
         print(f"  - FPS: {fps}")
