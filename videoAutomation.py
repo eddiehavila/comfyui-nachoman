@@ -319,7 +319,14 @@ class NACHOMAN_FullSongAnalyzerV4:
         print(f"[NACHOMAN V4]   ✓ Frames per chunk: {frames_per_chunk}")
         print(f"[NACHOMAN V4]   ✓ Seconds per chunk: {seconds_per_chunk:.3f}s")
         print(f"[NACHOMAN V4]   ✓ Chunks needed: {total_chunks} (@ {seconds_per_chunk:.2f}s each)")
-        print(f"[NACHOMAN V4]   ✓ Total video duration: ~{total_chunks * seconds_per_chunk:.2f}s")
+
+        expected_video_duration = total_chunks * seconds_per_chunk
+        duration_difference = expected_video_duration - audio_duration
+        print(f"[NACHOMAN V4]   ✓ Original audio duration: {audio_duration:.3f}s")
+        print(f"[NACHOMAN V4]   ✓ Expected video duration: {expected_video_duration:.3f}s")
+        print(f"[NACHOMAN V4]   ✓ Duration difference: {duration_difference:+.3f}s ({duration_difference/audio_duration*100:+.2f}%)")
+        if abs(duration_difference) > 0.1:
+            print(f"[NACHOMAN V4]   ⚠️  WARNING: Video will be {'longer' if duration_difference > 0 else 'shorter'} than audio by {abs(duration_difference):.3f}s")
 
         # Transcribe full audio if enabled
         full_lyrics = ""
@@ -1273,11 +1280,23 @@ class NACHOMAN_LoadSingleAudioChunk:
             "sample_rate": sample_rate,
         }
 
+        # Calculate cumulative audio coverage
+        end_time_in_audio = end_sample / sample_rate
+        chunk_start_time = start_sample / sample_rate
+        chunk_end_time = end_sample / sample_rate
+
         print(f"[NACHOMAN V4] ✅ Chunk #{index} loaded:")
-        print(f"  - Samples: {actual_samples}/{samples_per_chunk} ({'padded' if chunk_info['padded'] else 'full'})")
-        print(f"  - Expected duration: {chunk_info['duration']:.3f}s")
-        print(f"  - Actual duration: {chunk_info['actual_duration']:.3f}s")
-        print(f"  - Calculation: {samples_per_chunk} samples / {sample_rate} Hz = {chunk_info['duration']:.3f}s")
+        print(f"  - Sample range: {start_sample} to {end_sample} (of {num_samples} total)")
+        print(f"  - Time range: {chunk_start_time:.3f}s to {chunk_end_time:.3f}s (in {num_samples/sample_rate:.3f}s audio)")
+        print(f"  - Samples extracted: {actual_samples}/{samples_per_chunk} ({'padded with silence' if chunk_info['padded'] else 'full'})")
+        print(f"  - Expected chunk duration: {chunk_info['duration']:.3f}s")
+        print(f"  - Actual audio duration: {chunk_info['actual_duration']:.3f}s")
+        print(f"  - Padding duration: {(samples_per_chunk - actual_samples) / sample_rate:.3f}s")
+        print(f"  - Audio coverage so far: 0s to {chunk_end_time:.3f}s")
+
+        if chunk_info['padded']:
+            print(f"  ⚠️  This chunk is PADDED - ran out of audio at {chunk_end_time:.3f}s")
+
         print("="*80 + "\n")
 
         return (chunk_audio, chunk_info)
@@ -1547,12 +1566,35 @@ class NACHOMAN_SaveVideoChunkWithIndex:
                 f.write("")  # Empty marker
             print(f"[NACHOMAN V4]   ✓ Marker created: {marker_filename}")
 
-            # Get file size
+            # Get file size and verify duration
             if os.path.exists(video_path):
                 video_size_mb = os.path.getsize(video_path) / (1024 * 1024)
                 print(f"[NACHOMAN V4] ✅ Chunk #{index} saved successfully!")
                 print(f"[NACHOMAN V4] File size: {video_size_mb:.2f} MB")
                 print(f"[NACHOMAN V4] Location: {video_path}")
+
+                # Verify chunk duration with ffprobe
+                try:
+                    ffprobe_cmd = [
+                        'ffprobe',
+                        '-v', 'error',
+                        '-show_entries', 'format=duration',
+                        '-of', 'default=noprint_wrappers=1:nokey=1',
+                        video_path
+                    ]
+                    result = subprocess.run(ffprobe_cmd, capture_output=True, text=True)
+                    if result.returncode == 0 and result.stdout.strip():
+                        chunk_duration = float(result.stdout.strip())
+                        expected_duration = 97 / fps  # 97 frames at given fps
+                        duration_diff = chunk_duration - expected_duration
+                        print(f"[NACHOMAN V4] 📊 Chunk Duration Verification:")
+                        print(f"[NACHOMAN V4]   - Actual duration: {chunk_duration:.3f}s")
+                        print(f"[NACHOMAN V4]   - Expected duration: {expected_duration:.3f}s")
+                        print(f"[NACHOMAN V4]   - Difference: {duration_diff:+.3f}s")
+                        if abs(duration_diff) > 0.05:
+                            print(f"[NACHOMAN V4]   ⚠️  WARNING: Chunk duration mismatch!")
+                except Exception as e:
+                    print(f"[NACHOMAN V4]   (Could not verify chunk duration: {e})")
             else:
                 raise FileNotFoundError(f"Video file was not created: {video_path}")
 
@@ -1793,10 +1835,46 @@ class NACHOMAN_CombineAllChunks:
             ]
 
             print(f"[NACHOMAN V4] Found {len(chunk_files)} chunk files:")
-            for i, f in enumerate(chunk_files[:10]):  # Show first 10
-                print(f"[NACHOMAN V4]   {i}: {os.path.basename(f)}")
+
+            # Verify each chunk file's duration
+            chunk_durations = []
+            for i, f in enumerate(chunk_files):
+                file_size_mb = os.path.getsize(f) / (1024 * 1024)
+                try:
+                    ffprobe_cmd = [
+                        'ffprobe',
+                        '-v', 'error',
+                        '-show_entries', 'format=duration',
+                        '-of', 'default=noprint_wrappers=1:nokey=1',
+                        f
+                    ]
+                    result = subprocess.run(ffprobe_cmd, capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0 and result.stdout.strip():
+                        dur = float(result.stdout.strip())
+                        chunk_durations.append(dur)
+                        if i < 10:  # Show first 10
+                            print(f"[NACHOMAN V4]   {i}: {os.path.basename(f)} - {dur:.3f}s ({file_size_mb:.1f}MB)")
+                    else:
+                        chunk_durations.append(0.0)
+                        if i < 10:
+                            print(f"[NACHOMAN V4]   {i}: {os.path.basename(f)} - duration unknown ({file_size_mb:.1f}MB)")
+                except Exception as e:
+                    chunk_durations.append(0.0)
+                    if i < 10:
+                        print(f"[NACHOMAN V4]   {i}: {os.path.basename(f)} - error checking duration ({file_size_mb:.1f}MB)")
+
             if len(chunk_files) > 10:
                 print(f"[NACHOMAN V4]   ... and {len(chunk_files) - 10} more")
+
+            # Show duration statistics
+            if chunk_durations:
+                total_chunks_duration = sum(chunk_durations)
+                avg_chunk_duration = total_chunks_duration / len(chunk_durations) if chunk_durations else 0
+                print(f"[NACHOMAN V4] 📊 Chunk Duration Statistics:")
+                print(f"[NACHOMAN V4]   - Total chunks: {len(chunk_files)}")
+                print(f"[NACHOMAN V4]   - Total duration (sum of chunks): {total_chunks_duration:.3f}s")
+                print(f"[NACHOMAN V4]   - Average chunk duration: {avg_chunk_duration:.3f}s")
+                print(f"[NACHOMAN V4]   - Expected chunk duration: 3.880s (97 frames @ 25fps)")
 
             if len(chunk_files) == 0:
                 raise FileNotFoundError(f"No video chunks found in {output_folder}")
@@ -1854,6 +1932,36 @@ class NACHOMAN_CombineAllChunks:
                 print(f"[NACHOMAN V4] File: {final_video_path}")
                 print(f"[NACHOMAN V4] Size: {file_size_mb:.2f} MB")
                 print(f"[NACHOMAN V4] Combined {len(chunk_files)} chunks")
+
+                # Get actual video duration using ffprobe
+                try:
+                    ffprobe_cmd = [
+                        'ffprobe',
+                        '-v', 'error',
+                        '-show_entries', 'format=duration',
+                        '-of', 'default=noprint_wrappers=1:nokey=1',
+                        final_video_path
+                    ]
+                    result = subprocess.run(ffprobe_cmd, capture_output=True, text=True)
+                    if result.returncode == 0 and result.stdout.strip():
+                        actual_duration = float(result.stdout.strip())
+                        print(f"[NACHOMAN V4] 📊 Duration Analysis:")
+                        print(f"[NACHOMAN V4]   - Actual video duration: {actual_duration:.3f}s")
+                        print(f"[NACHOMAN V4]   - Expected chunks: {total_chunks}")
+                        print(f"[NACHOMAN V4]   - Actual chunks combined: {len(chunk_files)}")
+
+                        if total_chunks > 0:
+                            # Assuming 3.88s per chunk (97 frames @ 25fps)
+                            expected_duration_from_chunks = len(chunk_files) * 3.88
+                            duration_diff = actual_duration - expected_duration_from_chunks
+                            print(f"[NACHOMAN V4]   - Expected duration (from chunks): {expected_duration_from_chunks:.3f}s")
+                            print(f"[NACHOMAN V4]   - Duration difference: {duration_diff:+.3f}s ({duration_diff/expected_duration_from_chunks*100:+.2f}%)")
+
+                            if abs(duration_diff) > 0.5:
+                                print(f"[NACHOMAN V4]   ⚠️  WARNING: Significant duration mismatch detected!")
+                                print(f"[NACHOMAN V4]   This may indicate missing frames or audio samples between chunks.")
+                except Exception as e:
+                    print(f"[NACHOMAN V4]   (Could not verify duration with ffprobe: {e})")
             else:
                 raise FileNotFoundError(f"Final video was not created: {final_video_path}")
 
