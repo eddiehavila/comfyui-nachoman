@@ -328,6 +328,13 @@ class NACHOMAN_FullSongAnalyzerV4:
         if abs(duration_difference) > 0.1:
             print(f"[NACHOMAN V4]   ⚠️  WARNING: Video will be {'longer' if duration_difference > 0 else 'shorter'} than audio by {abs(duration_difference):.3f}s")
 
+        # Warning about HuMo frame generation behavior
+        if frames_per_chunk != 97:
+            print(f"[NACHOMAN V4]   ⚠️  IMPORTANT: HuMo video model generates exactly 97 frames per chunk (hardcoded)")
+            print(f"[NACHOMAN V4]   You requested {frames_per_chunk} frames ({seconds_per_chunk:.3f}s), but HuMo will generate 97 frames (3.880s)")
+            print(f"[NACHOMAN V4]   This will cause a {abs((97/fps) - seconds_per_chunk):.3f}s duration mismatch per chunk")
+            print(f"[NACHOMAN V4]   Total mismatch: {abs((97/fps) - seconds_per_chunk) * total_chunks:.3f}s across {total_chunks} chunks")
+
         # Transcribe full audio if enabled
         full_lyrics = ""
         chunk_transcriptions = []
@@ -1413,6 +1420,15 @@ class NACHOMAN_SaveVideoChunkWithIndex:
                 import numpy as np
                 import tempfile
 
+                # Check frame count
+                actual_frame_count = images.shape[0]
+                print(f"[NACHOMAN V4]   Received {actual_frame_count} frames from video generation")
+
+                # Warn if frame count doesn't match expected (HuMo always generates 97, but workflow might request different)
+                if actual_frame_count != 97 and actual_frame_count != 100:
+                    print(f"[NACHOMAN V4]   ⚠️  Unusual frame count detected: {actual_frame_count}")
+                    print(f"[NACHOMAN V4]   Expected: 97 frames (HuMo default) or 100 frames (4.0s @ 25fps)")
+
                 # Save frames to temporary video file
                 temp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
                 temp_video_path = temp_video.name
@@ -1585,11 +1601,24 @@ class NACHOMAN_SaveVideoChunkWithIndex:
                     result = subprocess.run(ffprobe_cmd, capture_output=True, text=True)
                     if result.returncode == 0 and result.stdout.strip():
                         chunk_duration = float(result.stdout.strip())
-                        expected_duration = 97 / fps  # 97 frames at given fps
+
+                        # Detect actual frame count from images if available
+                        if images is not None:
+                            actual_frames = images.shape[0]
+                            expected_duration = actual_frames / fps
+                            print(f"[NACHOMAN V4] 📊 Chunk Duration Verification:")
+                            print(f"[NACHOMAN V4]   - Actual video frames: {actual_frames}")
+                            print(f"[NACHOMAN V4]   - Actual duration: {chunk_duration:.3f}s")
+                            print(f"[NACHOMAN V4]   - Expected duration (from {actual_frames} frames): {expected_duration:.3f}s")
+                        else:
+                            # Fallback: assume 97 frames (HuMo default)
+                            expected_duration = 97 / fps
+                            print(f"[NACHOMAN V4] 📊 Chunk Duration Verification:")
+                            print(f"[NACHOMAN V4]   - Actual duration: {chunk_duration:.3f}s")
+                            print(f"[NACHOMAN V4]   - Expected duration (assuming 97 frames): {expected_duration:.3f}s")
+                            print(f"[NACHOMAN V4]   ⚠️  Cannot verify frame count (images input not connected)")
+
                         duration_diff = chunk_duration - expected_duration
-                        print(f"[NACHOMAN V4] 📊 Chunk Duration Verification:")
-                        print(f"[NACHOMAN V4]   - Actual duration: {chunk_duration:.3f}s")
-                        print(f"[NACHOMAN V4]   - Expected duration: {expected_duration:.3f}s")
                         print(f"[NACHOMAN V4]   - Difference: {duration_diff:+.3f}s")
                         if abs(duration_diff) > 0.05:
                             print(f"[NACHOMAN V4]   ⚠️  WARNING: Chunk duration mismatch!")
