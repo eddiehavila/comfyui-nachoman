@@ -1,0 +1,15 @@
+# pyproject.toml
+[project]
+name = "comfyui-nachoman"
+description = "nachoman custom nodes for ComfyUI."
+version = "0.1.0" 
+license = { file = "LICENSE.txt" }
+dependencies = [] # Filled in from requirements.txt
+
+[project.urls]
+Repository = "https://github.com/eddiehavila/comfyui-nachoman"
+
+[tool.comfy]
+PublisherId = "nachoman" 
+DisplayName = "nachoman Custom Nodes" 
+Icon = "" # Optional: link to an icon (SVG, PNG, JPG, or GIF; MAX. 800x400px).
